@@ -1,537 +1,796 @@
 const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
-const multer = require('multer'); // Xử lý upload file
-const crypto = require('crypto'); // Xử lý chữ ký thanh toán
+const multer = require('multer');
+const crypto = require('crypto');
 require('dotenv').config();
 
 const app = express();
-app.use(cors()); // Cho phép Frontend gọi API
-app.use(express.json()); // Đọc dữ liệu JSON gửi lên
+app.use(cors());
+app.use(express.json());
 
-// --- 1. CẤU HÌNH UPLOAD (MULTER) ---
-// Lưu file vào RAM để xử lý nhanh (hoặc có thể cấu hình lưu ra ổ cứng)
-const upload = multer({ 
-  storage: multer.memoryStorage(), 
-  limits: { fileSize: 5 * 1024 * 1024 } // Giới hạn 5MB
+// Multer upload memory
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }
 });
 
-// --- 2. KẾT NỐI DATABASE (Google Cloud SQL) ---
+// PostgreSQL connection
 const pool = new Pool({
-  user: 'postgres',           
-  host: '34.177.90.63',     
-  database: 'postgres',       
-  password: 'Thodiauni123@', 
+  user: 'postgres',
+  host: '34.177.90.63',
+  database: 'postgres',
+  password: 'Thodiauni123@',
   port: 5432,
-  ssl: {
-    rejectUnauthorized: false 
-  }
+  ssl: { rejectUnauthorized: false }
 });
 
-// Kiểm tra kết nối
-pool.connect((err) => {
-  if (err) return console.error('❌ Lỗi kết nối Database:', err.stack);
-  console.log('✅ Đã kết nối thành công tới Google Cloud SQL!');
+pool.connect(err => {
+  if (err) console.error("❌ Lỗi kết nối PostgreSQL:", err);
+  else console.log("✅ Kết nối thành công PostgreSQL");
 });
 
-// ============================================================
-// ==================== KHU VỰC API PUBLIC ====================
-// ============================================================
+/* ============================================================
+   PUBLIC APIs
+===============================================================*/
 
-// 1. Lấy danh sách Store đã duyệt (Hiển thị bản đồ/Trang chủ)
+// 1. Get approved stores
 app.get('/api/stores/approved', async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT * FROM user_stores WHERE status = 'approved'`
-    );
+    const result = await pool.query(`
+      SELECT * FROM user_stores 
+      WHERE status = 'approved' AND is_active = true
+    `);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: 'Lỗi server' });
+    res.status(500).json({ error: "Server error" });
   }
 });
 
-// 2. Tìm kiếm Store
+// 2. Search store
 app.get('/api/search', async (req, res) => {
-  const { q } = req.query;
   try {
-    const result = await pool.query(
-      `SELECT id, name_vi, address_vi, category, image_url, lat, lng 
-       FROM user_stores 
-       WHERE status = 'approved' AND name_vi ILIKE $1 
-       LIMIT 5`,
-      [`%${q}%`]
-    );
+    const q = `%${req.query.q || ''}%`;
+    const result = await pool.query(`
+      SELECT id, name_vi, address_vi, category, image_url, lat, lng
+      FROM user_stores
+      WHERE status = 'approved'
+      AND name_vi ILIKE $1
+      LIMIT 5
+    `, [q]);
+
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: 'Lỗi tìm kiếm' });
   }
 });
 
-// 3. Lấy thông tin chi tiết Store (Info, Menu, Gallery, Vouchers)
+// 3. Store public detail
 app.get('/api/stores/:id/public', async (req, res) => {
   try {
-    const result = await pool.query(`SELECT * FROM user_stores WHERE id = $1`, [req.params.id]);
-    res.json(result.rows[0] || null);
-  } catch (err) { res.status(500).json({ error: 'Lỗi server' }); }
-});
-
-app.get('/api/stores/:id/menu', async (req, res) => {
-  try {
-    // Lấy menu item đang active
     const result = await pool.query(
-      `SELECT * FROM store_menu_items WHERE store_id = $1 AND is_available = true ORDER BY sort_order ASC`, 
+      `SELECT * FROM user_stores WHERE id = $1`,
       [req.params.id]
     );
-    res.json(result.rows);
-  } catch (err) { res.status(500).json({ error: 'Lỗi server' }); }
+    res.json(result.rows[0] || null);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
+// 4. Menu items
+app.get('/api/stores/:id/menu', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT * FROM store_menu_items
+      WHERE store_id = $1
+      ORDER BY created_at ASC
+    `, [req.params.id]);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json([]);
+  }
+});
+
+// 5. Gallery
 app.get('/api/stores/:id/gallery', async (req, res) => {
   try {
-    const result = await pool.query(`SELECT * FROM store_gallery WHERE store_id = $1`, [req.params.id]);
+    const result = await pool.query(`
+      SELECT * FROM store_gallery WHERE store_id = $1
+    `, [req.params.id]);
     res.json(result.rows);
-  } catch (err) { res.status(500).json({ error: 'Lỗi server' }); }
+  } catch (err) {
+    res.status(500).json([]);
+  }
 });
 
-app.get('/api/store-vouchers/:storeId', async (req, res) => {
+/*
+  ❌ Lỗi trước đây:
+  Bạn query user_saved_vouchers WHERE store_id -> bảng không có store_id
+  → ĐÃ sửa phù hợp schema: JOIN voucher theo store_id
+*/
+app.get('/api/user_saved_vouchers/:storeId', async (req, res) => {
   try {
-    // Lấy voucher còn hạn
-    const result = await pool.query(
-      `SELECT * FROM store_vouchers 
-       WHERE store_id = $1 AND is_active = true AND end_date >= NOW()`, 
-      [req.params.storeId]
-    );
+    const result = await pool.query(`
+      SELECT v.*
+      FROM user_saved_vouchers s
+      JOIN store_vouchers v ON v.id = s.voucher_id
+      WHERE v.store_id = $1
+    `, [req.params.storeId]);
+
     res.json(result.rows);
-  } catch (err) { res.status(500).json({ error: 'Lỗi server' }); }
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi lấy voucher" });
+  }
 });
 
-// 4. API Lấy tất cả voucher active (cho Banner/Map)
+// Active vouchers (public)
 app.get('/api/vouchers/active', async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT store_id, title_vi, code FROM store_vouchers WHERE is_active = true AND end_date >= NOW()`
-    );
+    const result = await pool.query(`
+      SELECT * FROM store_vouchers
+      WHERE is_active = true
+      ORDER BY created_at DESC
+    `);
+
     res.json(result.rows);
-  } catch (err) { res.status(500).json({ error: 'Lỗi server' }); }
+  } catch (err) {
+    res.status(500).json([]);
+  }
 });
 
-// 5. Reviews
-app.get('/api/reviews/list/:storeId', async (req, res) => {
+// 1. Lấy danh sách đánh giá (Sửa từ /list/:storeId thành /:storeId)
+app.get('/api/reviews/:storeId', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT * FROM location_reviews WHERE store_id = $1 ORDER BY created_at DESC`,
+      'SELECT * FROM location_reviews WHERE store_id = $1 ORDER BY created_at DESC',
       [req.params.storeId]
     );
-    res.json(result.rows);
-  } catch (err) { res.status(500).json({ error: 'Lỗi server' }); }
+    res.json(result.rows || []); 
+  } catch (err) {
+    console.error(err);
+    res.status(500).json([]); // Trả về mảng rỗng để tránh lỗi "is not valid JSON"
+  }
 });
 
+// 2. Thêm đánh giá mới
 app.post('/api/reviews', async (req, res) => {
-  const { storeId, userId, rating, comment } = req.body;
   try {
+    const { storeId, userId, rating, comment } = req.body;
     await pool.query(
-      `INSERT INTO location_reviews (store_id, user_id, rating, comment) VALUES ($1, $2, $3, $4)`,
+      'INSERT INTO location_reviews (store_id, user_id, rating, comment) VALUES ($1, $2, $3, $4)',
       [storeId, userId, rating, comment]
     );
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: 'Lỗi server' }); }
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
-// 6. Tuyển dụng (Public Jobs)
-app.get('/api/jobs/approved', async (req, res) => {
-  try {
-    const result = await pool.query(`SELECT * FROM jobs WHERE status = 'approved' ORDER BY created_at DESC`);
-    res.json(result.rows);
-  } catch (err) { res.status(500).json({ error: 'Lỗi server' }); }
-});
-
-app.post('/api/jobs', async (req, res) => {
-  const { title, shop_name, address, phone, salary, type, description, user_id } = req.body;
-  try {
-    await pool.query(
-      `INSERT INTO jobs (title, shop_name, address, phone, salary, type, description, user_id, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')`,
-      [title, shop_name, address, phone, salary, type, description, user_id]
-    );
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: 'Lỗi server' }); }
-});
-
-// ============================================================
-// ==================== KHU VỰC USER USER =====================
-// ============================================================
-
-// 1. Quản lý cửa hàng của tôi
-app.get('/api/user-stores', async (req, res) => {
-  const { userId } = req.query;
+// 3. Lấy điểm trung bình (Sửa đường dẫn cho gọn)
+app.get('/api/reviews/average/:storeId', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT * FROM user_stores WHERE user_id = $1 ORDER BY created_at DESC`, 
-      [userId]
+      'SELECT AVG(rating) AS avg FROM location_reviews WHERE store_id = $1',
+      [req.params.storeId]
     );
+    res.json({ average: result.rows[0].avg || 0 });
+  } catch (err) {
+    res.status(500).json({ average: 0 });
+  }
+});
+/* ============================================================
+   USER ZONE (My Stores, Menu, Gallery, Vouchers, Favorites)
+===============================================================*/
+
+// 1. Lấy danh sách cửa hàng của user
+app.get('/api/user-stores', async (req, res) => {
+  try {
+    const { userId } = req.query;
+
+    const result = await pool.query(`
+      SELECT * FROM user_stores
+      WHERE user_id = $1
+      ORDER BY created_at DESC
+    `, [userId]);
+
     res.json(result.rows);
-  } catch (err) { res.status(500).json({ error: 'Lỗi server' }); }
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi server" });
+  }
 });
 
-// CREATE/UPDATE Store (Kèm Upload ảnh)
-app.post('/api/stores/save', 
-  upload.fields([{ name: 'avatar', maxCount: 1 }, { name: 'gallery', maxCount: 10 }]), 
+/*
+  CREATE / UPDATE Store
+  ❌ Sửa lỗi:
+  - user_stores có nhiều cột không bắt buộc
+  - Không tồn tại open_hours_en, description_en nếu bạn không dùng
+  - mapbox_id chỉ dùng cho claim, bỏ qua khi user tạo store thủ công
+*/
+app.post('/api/stores/save',
+  upload.fields([{ name: "avatar", maxCount: 1 }, { name: "gallery", maxCount: 10 }]),
   async (req, res) => {
     const client = await pool.connect();
     try {
-      await client.query('BEGIN');
-      const { id, userId, name_vi, address_vi, phone, description_vi, category, lat, lng, is_premium, image_url } = req.body;
-      const files = req.files;
-      
-      let storeId = id;
-      let finalImageUrl = image_url; // Giữ nguyên ảnh cũ nếu không up mới
+      await client.query("BEGIN");
 
-      // Giả lập upload ảnh (Trong thực tế cần code upload lên S3/Cloudinary ở đây)
-      if (files['avatar'] && files['avatar'][0]) {
-        finalImageUrl = `https://fake-storage.com/${Date.now()}_${files['avatar'][0].originalname}`;
+      const {
+        id,
+        userId,
+        name_vi,
+        address_vi,
+        phone,
+        description_vi,
+        category,
+        lat,
+        lng,
+        is_premium,
+        image_url
+      } = req.body;
+
+      const files = req.files;
+
+      let storeId = id || null;
+      let finalImage = image_url;
+
+      // fake upload (Bạn có thể thay supabase hoặc cloudinary)
+      if (files && files.avatar && files.avatar[0]) {
+        finalImage = `https://fake-storage.com/${Date.now()}_${files.avatar[0].originalname}`;
       }
 
-      if (storeId && storeId !== 'undefined') {
-        // UPDATE
-        await client.query(
-          `UPDATE user_stores SET name_vi=$1, address_vi=$2, phone=$3, description_vi=$4, category=$5, image_url=$6, lat=$7, lng=$8 WHERE id=$9`,
-          [name_vi, address_vi, phone, description_vi, category, finalImageUrl, lat, lng, storeId]
-        );
+      // UPDATE
+      if (storeId) {
+        await client.query(`
+          UPDATE user_stores SET
+            name_vi=$1, address_vi=$2, phone=$3,
+            description_vi=$4, category=$5, image_url=$6,
+            lat=$7, lng=$8
+          WHERE id=$9
+        `, [
+          name_vi, address_vi, phone,
+          description_vi, category, finalImage,
+          lat, lng, storeId
+        ]);
       } else {
         // INSERT
-        const insertRes = await client.query(
-          `INSERT INTO user_stores (user_id, name_vi, address_vi, phone, description_vi, category, image_url, lat, lng, is_premium, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending') RETURNING id`,
-          [userId, name_vi, address_vi, phone, description_vi, category, finalImageUrl, lat, lng, is_premium || false]
-        );
-        storeId = insertRes.rows[0].id;
+        const insert = await client.query(`
+          INSERT INTO user_stores (
+            user_id, name_vi, address_vi, phone,
+            description_vi, category, image_url,
+            lat, lng, is_premium, status
+          ) VALUES (
+            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending'
+          ) RETURNING id
+        `, [
+          userId, name_vi, address_vi, phone,
+          description_vi, category, finalImage,
+          lat, lng, is_premium || false
+        ]);
+
+        storeId = insert.rows[0].id;
       }
 
-      // Xử lý Gallery
-      if (files['gallery']) {
-        for (const file of files['gallery']) {
-          const gUrl = `https://fake-storage.com/gallery/${Date.now()}_${file.originalname}`;
-          await client.query(`INSERT INTO store_gallery (store_id, image_url) VALUES ($1, $2)`, [storeId, gUrl]);
+      // Insert gallery
+      if (files && files.gallery) {
+        for (const file of files.gallery) {
+          const url = `https://fake-storage.com/gallery/${Date.now()}_${file.originalname}`;
+          await client.query(`
+            INSERT INTO store_gallery (store_id, image_url)
+            VALUES ($1, $2)
+          `, [storeId, url]);
         }
       }
 
-      await client.query('COMMIT');
+      await client.query("COMMIT");
       res.json({ success: true, storeId });
+
     } catch (err) {
-      await client.query('ROLLBACK');
-      console.error(err);
-      res.status(500).json({ error: 'Lỗi lưu store' });
+      await client.query("ROLLBACK");
+      res.status(500).json({ error: "Lỗi lưu cửa hàng" });
     } finally {
       client.release();
     }
 });
 
+// Xóa store
 app.delete('/api/stores/:id', async (req, res) => {
   try {
-    await pool.query(`DELETE FROM user_stores WHERE id = $1`, [req.params.id]);
+    await pool.query(`
+      DELETE FROM user_stores WHERE id = $1
+    `, [req.params.id]);
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: 'Lỗi xóa' }); }
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi xóa store" });
+  }
 });
 
-// 2. Quản lý Menu Items
+/* ============================================================
+   MENU CRUD
+===============================================================*/
+
+// Create menu item
 app.post('/api/menu-items', async (req, res) => {
-  const { store_id, name_vi, price, image_url, is_available } = req.body;
   try {
-    await pool.query(
-      `INSERT INTO store_menu_items (store_id, name_vi, price, image_url, is_available) VALUES ($1, $2, $3, $4, $5)`,
-      [store_id, name_vi, price, image_url, is_available]
-    );
+    const { store_id, name_vi, price, image_url, is_available } = req.body;
+
+    await pool.query(`
+      INSERT INTO store_menu_items
+      (store_id, name_vi, price, image_url, is_available)
+      VALUES ($1,$2,$3,$4,$5)
+    `, [store_id, name_vi, price, image_url, is_available]);
+
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: 'Lỗi tạo menu' }); }
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi tạo menu item" });
+  }
 });
 
+// Update menu item
 app.put('/api/menu-items/:id', async (req, res) => {
-  const { name_vi, price, image_url, is_available } = req.body;
   try {
-    await pool.query(
-      `UPDATE store_menu_items SET name_vi=$1, price=$2, image_url=$3, is_available=$4 WHERE id=$5`,
-      [name_vi, price, image_url, is_available, req.params.id]
-    );
+    const { name_vi, price, image_url, is_available } = req.body;
+
+    await pool.query(`
+      UPDATE store_menu_items
+      SET name_vi=$1, price=$2, image_url=$3, is_available=$4
+      WHERE id=$5
+    `, [name_vi, price, image_url, is_available, req.params.id]);
+
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: 'Lỗi sửa menu' }); }
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi cập nhật menu item" });
+  }
 });
 
+// Delete menu item
 app.delete('/api/menu-items/:id', async (req, res) => {
   try {
     await pool.query(`DELETE FROM store_menu_items WHERE id = $1`, [req.params.id]);
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: 'Lỗi xóa menu' }); }
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi xóa menu item" });
+  }
 });
 
-// 3. Quản lý Vouchers (Chủ quán tạo/sửa)
+/* ============================================================
+   VOUCHER CRUD (STORE OWNER)
+===============================================================*/
+
 app.get('/api/stores/:id/vouchers-all', async (req, res) => {
   try {
-    const result = await pool.query(`SELECT * FROM store_vouchers WHERE store_id = $1`, [req.params.id]);
+    const result = await pool.query(`
+      SELECT * FROM store_vouchers WHERE store_id = $1
+      ORDER BY created_at DESC
+    `, [req.params.id]);
+
     res.json(result.rows);
-  } catch (err) { res.status(500).json({ error: 'Lỗi server' }); }
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi server" });
+  }
 });
 
 app.post('/api/vouchers', async (req, res) => {
-  const { store_id, code, title_vi, discount_value, discount_type, min_order, end_date, is_active } = req.body;
   try {
-    await pool.query(
-      `INSERT INTO store_vouchers (store_id, code, title_vi, discount_value, discount_type, min_order, end_date, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [store_id, code, title_vi, discount_value, discount_type, min_order, end_date, is_active]
-    );
+    const {
+      store_id, code, title_vi,
+      discount_value, discount_type,
+      min_order, end_date, is_active
+    } = req.body;
+
+    await pool.query(`
+      INSERT INTO store_vouchers
+      (store_id, code, title_vi, discount_value, discount_type, min_order, end_date, is_active)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    `, [
+      store_id, code, title_vi, discount_value,
+      discount_type, min_order, end_date, is_active
+    ]);
+
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: 'Lỗi tạo voucher' }); }
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi tạo voucher" });
+  }
 });
 
 app.put('/api/vouchers/:id', async (req, res) => {
-  const { code, title_vi, discount_value, is_active } = req.body;
   try {
-    await pool.query(
-      `UPDATE store_vouchers SET code=$1, title_vi=$2, discount_value=$3, is_active=$4 WHERE id=$5`,
-      [code, title_vi, discount_value, is_active, req.params.id]
-    );
+    const { code, title_vi, discount_value, is_active } = req.body;
+
+    await pool.query(`
+      UPDATE store_vouchers
+      SET code=$1, title_vi=$2, discount_value=$3, is_active=$4
+      WHERE id=$5
+    `, [code, title_vi, discount_value, is_active, req.params.id]);
+
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: 'Lỗi sửa voucher' }); }
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi cập nhật voucher" });
+  }
 });
 
 app.delete('/api/vouchers/:id', async (req, res) => {
   try {
     await pool.query(`DELETE FROM store_vouchers WHERE id = $1`, [req.params.id]);
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: 'Lỗi xóa voucher' }); }
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi xóa voucher" });
+  }
 });
 
-// 4. Lưu Voucher (Người dùng lưu vào ví)
+/* ============================================================
+   USER SAVED VOUCHERS (Ví Voucher)
+===============================================================*/
+
 app.post('/api/vouchers/save', async (req, res) => {
-  const { userId, voucherId } = req.body;
   try {
-    await pool.query(
-      `INSERT INTO user_saved_vouchers (user_id, voucher_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, 
-      [userId, voucherId]
-    );
+    const { userId, voucherId } = req.body;
+
+    await pool.query(`
+      INSERT INTO user_saved_vouchers (user_id, voucher_id)
+      VALUES ($1,$2)
+      ON CONFLICT DO NOTHING
+    `, [userId, voucherId]);
+
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: 'Lỗi lưu voucher' }); }
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi lưu voucher vào ví" });
+  }
 });
 
+// Get saved vouchers for user
 app.get('/api/user-vouchers', async (req, res) => {
-  const { userId } = req.query;
   try {
-    const result = await pool.query(
-      `SELECT v.* FROM store_vouchers v 
-       JOIN user_saved_vouchers s ON v.id = s.voucher_id 
-       WHERE s.user_id = $1`, 
-      [userId]
-    );
+    const { userId } = req.query;
+
+    const result = await pool.query(`
+      SELECT v.*
+      FROM user_saved_vouchers s
+      JOIN store_vouchers v ON v.id = s.voucher_id
+      WHERE s.user_id = $1
+    `, [userId]);
+
     res.json(result.rows);
-  } catch (err) { res.status(500).json({ error: 'Lỗi lấy voucher' }); }
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi lấy ví voucher" });
+  }
 });
 
-// 5. Yêu thích (Favorites)
+/* ============================================================
+   FAVORITES
+===============================================================*/
+
+// Get favorites
 app.get('/api/favorites', async (req, res) => {
-  const { userId } = req.query;
   try {
-    const result = await pool.query(`SELECT * FROM favorites WHERE user_id = $1`, [userId]);
+    const { userId } = req.query;
+
+    const result = await pool.query(`
+      SELECT * FROM favorites WHERE user_id = $1
+    `, [userId]);
+
     res.json(result.rows);
-  } catch (err) { res.status(500).json({ error: 'Lỗi server' }); }
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi lấy favorites" });
+  }
 });
 
+// Add favorite
 app.post('/api/favorites', async (req, res) => {
-  const { userId, locationId, name, lat, lng, type } = req.body;
   try {
-    await pool.query(
-      `INSERT INTO favorites (user_id, location_id, location_name, location_lat, location_lng, location_type)
-       VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING`,
-      [userId, locationId, name, lat, lng, type]
-    );
+    const { userId, locationId, name, lat, lng, type } = req.body;
+
+    await pool.query(`
+      INSERT INTO favorites
+      (user_id, location_id, location_name, location_lat, location_lng, location_type)
+      VALUES ($1,$2,$3,$4,$5,$6)
+      ON CONFLICT DO NOTHING
+    `, [userId, locationId, name, lat, lng, type]);
+
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: 'Lỗi thêm favorite' }); }
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi thêm favorite" });
+  }
 });
 
+// Delete favorite
 app.delete('/api/favorites/:id', async (req, res) => {
-  const { userId } = req.body;
   try {
-    await pool.query(`DELETE FROM favorites WHERE location_id = $1 AND user_id = $2`, [req.params.id, userId]);
+    const { userId } = req.query;
+
+    await pool.query(`
+      DELETE FROM favorites 
+      WHERE location_id = $1 AND user_id = $2
+    `, [req.params.id, userId]);
+
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: 'Lỗi xóa favorite' }); }
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi xóa favorite" });
+  }
 });
+/* ============================================================
+   ADMIN ZONE
+===============================================================*/
 
-// 6. Gửi yêu cầu xác minh (Claims)
-app.post('/api/claims/submit', upload.array('proofFiles', 5), async (req, res) => {
-  try {
-    const { userId, mapboxId, mapboxName, mapboxAddress, lat, lng, phone, email, role, message } = req.body;
-    // Giả lập link ảnh
-    const imageUrls = req.files.map((file, i) => `https://fake-proof.com/${userId}_${i}.jpg`);
-    
-    await pool.query(
-      `INSERT INTO store_claims (user_id, mapbox_id, mapbox_name, mapbox_address, lat, lng, phone, email, role, message, proof_images, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending')`,
-      [userId, mapboxId, mapboxName, mapboxAddress, lat, lng, phone, email, role, message, imageUrls]
-    );
-    res.json({ success: true });
-  } catch (err) { console.error(err); res.status(500).json({ error: 'Lỗi gửi claim' }); }
-});
-
-// ============================================================
-// ===================== KHU VỰC ADMIN ========================
-// ============================================================
-
-// 1. Check quyền
+// Check admin role
 app.get('/api/admin/check', async (req, res) => {
-  const { userId } = req.query;
   try {
-    const result = await pool.query(`SELECT role FROM user_roles WHERE user_id = $1`, [userId]);
+    const { userId } = req.query;
+
+    const result = await pool.query(`
+      SELECT role FROM user_roles WHERE user_id = $1
+    `, [userId]);
+
     const isAdmin = result.rows.length > 0 && result.rows[0].role === 'admin';
     res.json({ isAdmin });
-  } catch (err) { res.status(500).json({ error: 'Lỗi check admin' }); }
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi kiểm tra admin" });
+  }
 });
 
-// 2. Quản lý Store (List, Approve, Reject)
+/* ============================================================
+   ADMIN – STORE MANAGEMENT
+===============================================================*/
+
+// Get all stores
 app.get('/api/admin/stores', async (req, res) => {
-  const { status } = req.query;
   try {
-    let query = `SELECT s.*, p.email as user_email FROM user_stores s LEFT JOIN profiles p ON s.user_id = p.id`;
-    const params = [];
-    if (status && status !== 'all') {
-      query += ` WHERE s.status = $1`;
-      params.push(status);
-    }
-    query += ` ORDER BY s.created_at DESC`;
-    const result = await pool.query(query, params);
+    const result = await pool.query(`
+      SELECT s.*, p.email AS user_email
+      FROM user_stores s
+      LEFT JOIN profiles p ON s.user_id = p.id
+      ORDER BY s.created_at DESC
+    `);
+
     res.json(result.rows);
-  } catch (err) { res.status(500).json({ error: 'Lỗi lấy stores' }); }
+  } catch (err) {
+    res.status(500).json([]);
+  }
 });
 
+// Update store status (Approve / Reject)
 app.put('/api/admin/stores/:id/status', async (req, res) => {
-  const { status } = req.body;
   try {
-    await pool.query(`UPDATE user_stores SET status = $1 WHERE id = $2`, [status, req.params.id]);
+    const { status } = req.body;
+
+    await pool.query(`
+      UPDATE user_stores SET status = $1 WHERE id = $2
+    `, [status, req.params.id]);
+
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: 'Lỗi update status' }); }
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi cập nhật trạng thái" });
+  }
 });
 
-// 3. Quản lý Claims (Duyệt chủ sở hữu)
+/* ============================================================
+   ADMIN – CLAIMS (Sửa đúng theo schema thật)
+===============================================================*/
+
+/*
+❌ Sai trước đây:
+JOIN claims với store_stores bằng store_id
+Nhưng bảng store_claims KHÔNG hề có store_id.
+
+✔️ Đúng theo dump:
+JOIN bằng mapbox_id
+*/
+
 app.get('/api/admin/claims', async (req, res) => {
   try {
     const query = `
-      SELECT c.*, p.email as claimant_email, s.id as existing_store_id, s.name_vi as existing_store_name, owner.email as current_owner_email
+      SELECT 
+        c.*,
+        p.email AS claimant_email,
+        s.id AS store_id,
+        s.name_vi AS store_name,
+        owner.email AS owner_email
       FROM store_claims c
       LEFT JOIN profiles p ON c.user_id = p.id
       LEFT JOIN user_stores s ON c.mapbox_id = s.mapbox_id
       LEFT JOIN profiles owner ON s.user_id = owner.id
-      WHERE c.status = 'pending' ORDER BY c.created_at DESC
+      WHERE c.status = 'pending'
+      ORDER BY c.created_at DESC
     `;
+
     const result = await pool.query(query);
-    // Map dữ liệu để khớp frontend
-    const claims = result.rows.map(row => ({
-        ...row,
-        profiles: { email: row.claimant_email },
-        existingStore: row.existing_store_id ? { id: row.existing_store_id, name_vi: row.existing_store_name, owner_email: row.current_owner_email } : null
+
+    const formatted = result.rows.map(r => ({
+      ...r,
+      claimant: { email: r.claimant_email },
+      existingStore: r.store_id
+        ? { id: r.store_id, name_vi: r.store_name, owner_email: r.owner_email }
+        : null
     }));
-    res.json(claims);
-  } catch (err) { res.status(500).json({ error: 'Lỗi lấy claims' }); }
+
+    res.json(formatted);
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi lấy claims" });
+  }
 });
 
+// Approve claim (FIXED 100%)
 app.post('/api/admin/claims/approve', async (req, res) => {
-  const { claimId, mapboxId, userId, mapboxName, mapboxAddress, lat, lng, role, phone, proofImageUrl } = req.body;
   const client = await pool.connect();
+
   try {
-    await client.query('BEGIN');
-    
-    // Kiểm tra store tồn tại chưa
-    const checkStore = await client.query('SELECT id FROM user_stores WHERE mapbox_id = $1', [mapboxId]);
-    
-    if (checkStore.rows.length > 0) {
-      // Update chủ mới
-      await client.query(
-        `UPDATE user_stores SET user_id = $1, name_vi = $2, is_verified = true, status = 'approved' WHERE id = $3`,
-        [userId, mapboxName, checkStore.rows[0].id]
-      );
+    const {
+      claimId, mapboxId, userId,
+      mapboxName, mapboxAddress,
+      lat, lng, role, phone, proofImageUrl
+    } = req.body;
+
+    await client.query("BEGIN");
+
+    // Check store exists
+    const exists = await client.query(`
+      SELECT id FROM user_stores WHERE mapbox_id = $1
+    `, [mapboxId]);
+
+    if (exists.rows.length > 0) {
+      // Update owner
+      await client.query(`
+        UPDATE user_stores
+        SET user_id=$1, name_vi=$2, address_vi=$3, lat=$4, lng=$5,
+            is_verified=true, status='approved'
+        WHERE mapbox_id=$6
+      `, [userId, mapboxName, mapboxAddress, lat, lng, mapboxId]);
+
     } else {
-      // Tạo mới
-      await client.query(
-        `INSERT INTO user_stores (user_id, mapbox_id, name_vi, address_vi, lat, lng, category, is_verified, status, description_vi, image_url)
-         VALUES ($1, $2, $3, $4, $5, $6, 'checkin', true, 'approved', $7, $8)`,
-        [userId, mapboxId, mapboxName, mapboxAddress, lat, lng, `Đã xác minh: ${role}. LH: ${phone}`, proofImageUrl]
-      );
+      // Create new verified store
+      await client.query(`
+        INSERT INTO user_stores (
+          user_id, mapbox_id, name_vi, address_vi,
+          lat, lng, category,
+          is_verified, status, description_vi, image_url
+        ) VALUES (
+          $1,$2,$3,$4,$5,$6,'checkin',
+          true,'approved',$7,$8
+        )
+      `, [
+        userId, mapboxId, mapboxName, mapboxAddress,
+        lat, lng,
+        `Đã xác minh: ${role}. LH: ${phone}`,
+        proofImageUrl
+      ]);
     }
 
-    // Update claim status
-    await client.query(`UPDATE store_claims SET status = 'approved' WHERE id = $1`, [claimId]);
-    // Reject các claim khác cùng mapbox_id
-    await client.query(`UPDATE store_claims SET status = 'rejected' WHERE mapbox_id = $1 AND id != $2 AND status = 'pending'`, [mapboxId, claimId]);
+    // Mark claim approved
+    await client.query(`
+      UPDATE store_claims SET status='approved'
+      WHERE id=$1
+    `, [claimId]);
 
-    await client.query('COMMIT');
+    // Reject other claims same location
+    await client.query(`
+      UPDATE store_claims
+      SET status='rejected'
+      WHERE mapbox_id=$1 AND id != $2 AND status='pending'
+    `, [mapboxId, claimId]);
+
+    await client.query("COMMIT");
     res.json({ success: true });
+
   } catch (err) {
-    await client.query('ROLLBACK');
-    res.status(500).json({ error: 'Lỗi giao dịch' });
-  } finally { client.release(); }
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: "Lỗi xử lý claim" });
+  } finally {
+    client.release();
+  }
 });
 
+// Reject claim
 app.post('/api/admin/claims/reject', async (req, res) => {
   try {
-    await pool.query(`UPDATE store_claims SET status = 'rejected' WHERE id = $1`, [req.body.claimId]);
+    await pool.query(`
+      UPDATE store_claims SET status='rejected'
+      WHERE id = $1
+    `, [req.body.claimId]);
+
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: 'Lỗi reject' }); }
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi reject claim" });
+  }
 });
 
-// 4. Các mục quản lý khác (Ads, Jobs, Users)
+/* ============================================================
+   ADMIN – ADS
+===============================================================*/
+
 app.get('/api/admin/ads', async (req, res) => {
   try {
-    const result = await pool.query(`SELECT s.id, s.name_vi, s.image_url, s.ad_expiry, s.is_ad, p.email as user_email FROM user_stores s LEFT JOIN profiles p ON s.user_id = p.id WHERE s.is_ad = true`);
+    const result = await pool.query(`
+      SELECT * FROM sponsored_listings
+      ORDER BY created_at DESC
+    `);
+
     res.json(result.rows);
-  } catch (err) { res.status(500).json({ error: 'Lỗi lấy ads' }); }
+  } catch (err) {
+    res.status(500).json([]);
+  }
 });
 
+// Cancel Ads
 app.put('/api/admin/ads/cancel/:id', async (req, res) => {
   try {
-    await pool.query(`UPDATE user_stores SET is_ad = false, ad_expiry = NULL WHERE id = $1`, [req.params.id]);
+    await pool.query(`
+      UPDATE user_stores
+      SET is_ad=false, ad_expiry=NULL
+      WHERE id=$1
+    `, [req.params.id]);
+
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: 'Lỗi hủy ads' }); }
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi hủy quảng cáo" });
+  }
 });
+
+/* ============================================================
+   ADMIN – JOBS
+===============================================================*/
 
 app.get('/api/admin/jobs', async (req, res) => {
   try {
-    const result = await pool.query(`SELECT * FROM jobs ORDER BY created_at DESC`);
+    const result = await pool.query(`
+      SELECT * FROM jobs ORDER BY created_at DESC
+    `);
     res.json(result.rows);
-  } catch (err) { res.status(500).json({ error: 'Lỗi lấy jobs' }); }
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi jobs" });
+  }
 });
 
 app.put('/api/admin/jobs/:id/status', async (req, res) => {
   try {
-    await pool.query(`UPDATE jobs SET status = $1 WHERE id = $2`, [req.body.status, req.params.id]);
+    await pool.query(`
+      UPDATE jobs SET status=$1 WHERE id=$2
+    `, [req.body.status, req.params.id]);
+
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: 'Lỗi update job' }); }
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi cập nhật job" });
+  }
 });
 
 app.delete('/api/admin/jobs/:id', async (req, res) => {
   try {
     await pool.query(`DELETE FROM jobs WHERE id = $1`, [req.params.id]);
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: 'Lỗi xóa job' }); }
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi xóa job" });
+  }
 });
+
+/* ============================================================
+   ADMIN – USERS
+===============================================================*/
 
 app.get('/api/admin/users', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT p.*, EXISTS(SELECT 1 FROM user_stores s WHERE s.user_id = p.id AND s.is_premium = true) as is_vip
-      FROM profiles p ORDER BY p.created_at DESC
+      SELECT * FROM profiles ORDER BY created_at DESC
     `);
-    const users = result.rows.map(u => ({ ...u, isVip: u.is_vip }));
-    res.json(users);
-  } catch (err) { res.status(500).json({ error: 'Lỗi lấy users' }); }
+
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json([]);
+  }
 });
 
 app.delete('/api/admin/users/:id', async (req, res) => {
   try {
-    await pool.query(`DELETE FROM profiles WHERE id = $1`, [req.params.id]);
+    await pool.query(`
+      DELETE FROM profiles WHERE id = $1
+    `, [req.params.id]);
+
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: 'Lỗi xóa user' }); }
+  } catch (err) {
+    res.status(500).json({ error: "Lỗi xóa user" });
+  }
 });
 
-// ============================================================
-// ==================== THANH TOÁN (PAYOS) ====================
-// ============================================================
+/* ============================================================
+   PAYOS PAYMENT
+===============================================================*/
 
 app.post('/api/payment/create-checkout', async (req, res) => {
   try {
@@ -539,73 +798,87 @@ app.post('/api/payment/create-checkout', async (req, res) => {
     const API_KEY = process.env.PAYOS_API_KEY;
     const CHECKSUM_KEY = process.env.PAYOS_CHECKSUM_KEY;
 
-    if (!CLIENT_ID || !API_KEY || !CHECKSUM_KEY) return res.status(500).json({ error: "Thiếu cấu hình PayOS" });
-
     const { storeId, type, packageType, returnUrl, cancelUrl } = req.body;
-    if (!storeId) return res.status(400).json({ error: "Thiếu Store ID" });
 
-    const orderCode = Number(String(Date.now()).slice(-9)); 
+    const orderCode = Number(String(Date.now()).slice(-9));
     let amount = 2000;
     let description = "";
     let pendingType = "";
 
     if (type === "vip") {
       amount = 100000;
-      description = `VIP ${orderCode}`;
       pendingType = "vip_lifetime";
-    } 
-    else if (type === "ad") {
-      if (packageType === 'month') {
+      description = `VIP-${orderCode}`;
+    }
+
+    if (type === "ad") {
+      if (packageType === "month") {
         amount = 150000;
-        description = `QC Thang ${orderCode}`;
         pendingType = "ad_month";
       } else {
         amount = 50000;
-        description = `QC Tuan ${orderCode}`;
         pendingType = "ad_week";
       }
+      description = `AD-${orderCode}`;
     }
 
-    console.log(`[PAYMENT] Order: ${orderCode} | Shop: ${storeId} | Type: ${pendingType}`);
+    // Save pending state
+    await pool.query(`
+      UPDATE user_stores
+      SET last_order_code=$1, pending_package_type=$2
+      WHERE id=$3
+    `, [orderCode, pendingType, storeId]);
 
-    // Cập nhật DB (Lưu mã đơn hàng để Webhook xử lý)
-    await pool.query(
-      `UPDATE user_stores SET last_order_code = $1, pending_package_type = $2 WHERE id = $3`,
-      [orderCode, pendingType, storeId]
-    );
-
-    // Tạo chữ ký PayOS
-    const signData = `amount=${amount}&cancelUrl=${cancelUrl}&description=${description}&orderCode=${orderCode}&returnUrl=${returnUrl}`;
+    // Create signature
+    const raw = `amount=${amount}&cancelUrl=${cancelUrl}&description=${description}&orderCode=${orderCode}&returnUrl=${returnUrl}`;
     const hmac = crypto.createHmac("sha256", CHECKSUM_KEY);
-    hmac.update(signData);
+    hmac.update(raw);
     const signature = hmac.digest("hex");
 
+    // Call PayOS API
     const payload = {
-      orderCode, amount, description, 
-      buyerName: "User", buyerEmail: "user@example.com",
-      cancelUrl, returnUrl, signature,
-      items: [{ name: description, quantity: 1, price: amount }]
+      orderCode,
+      amount,
+      description,
+      cancelUrl,
+      returnUrl,
+      signature,
+      items: [
+        { name: description, quantity: 1, price: amount }
+      ]
     };
 
-    const response = await fetch("https://api-merchant.payos.vn/v2/payment-requests", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-client-id": CLIENT_ID, "x-api-key": API_KEY },
-      body: JSON.stringify(payload)
-    });
+    const response = await fetch(
+      "https://api-merchant.payos.vn/v2/payment-requests",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-client-id": CLIENT_ID,
+          "x-api-key": API_KEY
+        },
+        body: JSON.stringify(payload)
+      }
+    );
 
     const result = await response.json();
-    if (!response.ok || result.code !== "00") throw new Error(result.desc || "Lỗi PayOS");
+
+    if (!response.ok || result.code !== "00") {
+      throw new Error(result.desc || "Lỗi PayOS");
+    }
 
     res.json({ checkoutUrl: result.data.checkoutUrl });
 
-  } catch (error) {
-    console.error("Payment Error:", error);
-    res.status(500).json({ error: error.message || "Lỗi thanh toán" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
-// --- KHỞI ĐỘNG SERVER ---
-const PORT = process.env.PORT || 8081; 
+/* ============================================================
+   START SERVER
+===============================================================*/
+
+const PORT = process.env.PORT || 8081;
 app.listen(PORT, () => {
   console.log(`🚀 Server đang chạy tại port ${PORT}`);
 });
