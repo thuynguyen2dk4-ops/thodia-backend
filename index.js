@@ -4,7 +4,14 @@ const cors = require('cors');
 const multer = require('multer');
 const crypto = require('crypto');
 require('dotenv').config();
+const admin = require('firebase-admin');
 
+admin.initializeApp({
+  credential: admin.credential.applicationDefault(), // 👈 Dùng cái này thay vì cert()
+  storageBucket: "winged-ray-485505-m3.firebasestorage.app" 
+});
+
+const bucket = admin.storage().bucket();
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -214,35 +221,39 @@ app.post('/api/stores/save',
       let storeId = id || null;
       let finalImage = image_url;
 
-      // Fake upload (Lưu ý thay bằng storage thật sau này)
-      if (files && files.avatar && files.avatar[0]) {
-        finalImage = `https://via.placeholder.com/300?text=${encodeURIComponent(files.avatar[0].originalname)}`;
-      }
+      const uploadToFirebase = (file) => {
+        return new Promise((resolve, reject) => {
+          if (!file) return resolve(null);
 
-      if (storeId) {
-        await client.query(`
-          UPDATE user_stores SET
-            name_vi=$1, address_vi=$2, phone=$3,
-            description_vi=$4, category=$5, image_url=$6,
-            lat=$7, lng=$8
-          WHERE id=$9
-        `, [name_vi, address_vi, phone, description_vi, category, finalImage, lat, lng, storeId]);
-      } else {
-        const insert = await client.query(`
-          INSERT INTO user_stores (
-            user_id, name_vi, address_vi, phone,
-            description_vi, category, image_url,
-            lat, lng, is_premium, status
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending') RETURNING id
-        `, [userId, name_vi, address_vi, phone, description_vi, category, finalImage, lat, lng, is_premium || false]);
+          // Tạo tên file ngẫu nhiên để không trùng
+          const fileName = `stores/${Date.now()}_${file.originalname}`;
+          const fileUpload = bucket.file(fileName);
 
-        storeId = insert.rows[0].id;
-      }
+          const blobStream = fileUpload.createWriteStream({
+            metadata: {
+              contentType: file.mimetype
+            }
+          });
 
+          blobStream.on('error', (error) => {
+            console.error('Lỗi upload:', error);
+            reject(error);
+          });
+
+          blobStream.on('finish', async () => {
+            // Lấy đường dẫn public (để xem được ảnh)
+            await fileUpload.makePublic(); 
+            const publicUrl = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
+            resolve(publicUrl);
+          });
+
+          blobStream.end(file.buffer);
+        });
+      };
       // Insert gallery
       if (files && files.gallery) {
         for (const file of files.gallery) {
-          const url = `https://via.placeholder.com/300?text=${encodeURIComponent(file.originalname)}`;
+          const url = await uploadToFirebase(file);
           await client.query(`
             INSERT INTO store_gallery (store_id, image_url) VALUES ($1, $2)
           `, [storeId, url]);
