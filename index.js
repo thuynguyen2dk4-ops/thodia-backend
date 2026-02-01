@@ -232,7 +232,6 @@ app.post('/api/stores/save',
           });
           blobStream.on('error', (error) => reject(error));
           blobStream.on('finish', async () => {
-            await fileUpload.makePublic(); 
             const publicUrl = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
             resolve(publicUrl);
           });
