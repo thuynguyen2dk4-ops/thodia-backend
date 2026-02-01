@@ -205,6 +205,7 @@ app.get('/api/user-stores', async (req, res) => {
 });
 
 // Save Store (Create / Update)
+// Save Store (Create / Update)
 app.post('/api/stores/save',
   upload.fields([{ name: "avatar", maxCount: 1 }, { name: "gallery", maxCount: 10 }]),
   async (req, res) => {
@@ -218,45 +219,65 @@ app.post('/api/stores/save',
       } = req.body;
 
       const files = req.files;
-      let storeId = id || null;
-      let finalImage = image_url;
+      let finalImage = image_url; // Mặc định dùng ảnh cũ (nếu là sửa)
 
+      // --- HÀM UPLOAD (Giữ nguyên của bạn) ---
       const uploadToFirebase = (file) => {
         return new Promise((resolve, reject) => {
           if (!file) return resolve(null);
-
-          // Tạo tên file ngẫu nhiên để không trùng
           const fileName = `stores/${Date.now()}_${file.originalname}`;
           const fileUpload = bucket.file(fileName);
-
           const blobStream = fileUpload.createWriteStream({
-            metadata: {
-              contentType: file.mimetype
-            }
+            metadata: { contentType: file.mimetype }
           });
-
-          blobStream.on('error', (error) => {
-            console.error('Lỗi upload:', error);
-            reject(error);
-          });
-
+          blobStream.on('error', (error) => reject(error));
           blobStream.on('finish', async () => {
-            // Lấy đường dẫn public (để xem được ảnh)
             await fileUpload.makePublic(); 
             const publicUrl = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
             resolve(publicUrl);
           });
-
           blobStream.end(file.buffer);
         });
       };
-      // Insert gallery
+
+      // 1. XỬ LÝ AVATAR (Bạn bị thiếu đoạn này)
+      if (files && files.avatar && files.avatar[0]) {
+        console.log("Đang upload Avatar...");
+        const newAvatarUrl = await uploadToFirebase(files.avatar[0]);
+        if (newAvatarUrl) finalImage = newAvatarUrl;
+      }
+
+      let storeId = id;
+
+      // 2. LƯU THÔNG TIN CỬA HÀNG VÀO DB (Bạn bị thiếu đoạn này)
+      if (storeId) {
+        // --- Cập nhật (UPDATE) ---
+        await client.query(`
+          UPDATE user_stores 
+          SET name_vi=$1, address_vi=$2, phone=$3, description_vi=$4, 
+              category=$5, lat=$6, lng=$7, image_url=$8, updated_at=NOW()
+          WHERE id=$9
+        `, [name_vi, address_vi, phone, description_vi, category, lat, lng, finalImage, storeId]);
+      } else {
+        // --- Tạo mới (INSERT) ---
+        const insertRes = await client.query(`
+          INSERT INTO user_stores 
+          (user_id, name_vi, address_vi, phone, description_vi, category, lat, lng, image_url, status, is_active, created_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', true, NOW())
+          RETURNING id
+        `, [userId, name_vi, address_vi, phone, description_vi, category, lat, lng, finalImage]);
+        storeId = insertRes.rows[0].id;
+      }
+
+      // 3. XỬ LÝ GALLERY (Đoạn này bạn làm đúng rồi, nhưng cần storeId từ bước 2)
       if (files && files.gallery) {
         for (const file of files.gallery) {
           const url = await uploadToFirebase(file);
-          await client.query(`
-            INSERT INTO store_gallery (store_id, image_url) VALUES ($1, $2)
-          `, [storeId, url]);
+          if (url) {
+            await client.query(`
+              INSERT INTO store_gallery (store_id, image_url) VALUES ($1, $2)
+            `, [storeId, url]);
+          }
         }
       }
 
@@ -265,25 +286,12 @@ app.post('/api/stores/save',
 
     } catch (err) {
       await client.query("ROLLBACK");
+      console.error("Lỗi Save Store:", err); // In lỗi ra để dễ debug
       res.status(500).json({ error: "Lỗi lưu cửa hàng" });
     } finally {
       client.release();
     }
 });
-
-// Xóa store
-app.delete('/api/stores/:id', async (req, res) => {
-  try {
-    await pool.query(`DELETE FROM user_stores WHERE id = $1`, [req.params.id]);
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: "Lỗi xóa store" });
-  }
-});
-
-/* ============================================================
-   MENU CRUD
-===============================================================*/
 
 app.post('/api/menu-items', async (req, res) => {
   try {
