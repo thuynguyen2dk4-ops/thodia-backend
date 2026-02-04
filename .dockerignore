@@ -1,9 +1,8 @@
+Loại bỏ các thư mục nặng không cần thiết khi upload lên GCP Build
+
 node_modules
 dist
 build
-out
-npm-debug.log
-.env
 .git
 .gitignore
 .dockerignore
@@ -11,10 +10,18 @@ npm-debug.log
 .vscode
 .idea
 .DS_Store
-.md
+*.md
 tests
 test
 coverage
-npm-debug.log
+
+Loại bỏ các file log và môi trường local
+
+npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+.env
+
+Loại bỏ các file build tạm
+
+tsconfig.tsbuildinfo
