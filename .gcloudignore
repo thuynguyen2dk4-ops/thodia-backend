@@ -1,0 +1,20 @@
+File này hướng dẫn gcloud những gì CẦN và KHÔNG CẦN gửi lên server build
+
+Chúng ta sẽ copy từ .gitignore nhưng LOẠI BỎ dòng service-account-key.json
+
+.git
+.gitignore
+node_modules
+dist
+build
+
+CHO PHÉP gửi file này lên GCP để Docker có thể COPY
+
+#!service-account-key.json
+
+Loại bỏ các file rác khác
+
+.vscode
+.idea
+.DS_Store
+*.md

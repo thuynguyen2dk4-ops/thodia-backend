@@ -1,4 +1,4 @@
-Loại bỏ các thư mục nặng không cần thiết khi upload lên GCP Build
+Loại bỏ các thư mục nặng để upload nhanh lên GCP
 
 node_modules
 dist
@@ -14,6 +14,7 @@ build
 tests
 test
 coverage
+uploads
 
 Loại bỏ các file log và môi trường local
 
@@ -21,6 +22,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .env
+
+LƯU Ý: Đã xóa service-account-key.json khỏi đây để Docker có thể copy được
+
+Tuy nhiên bạn vẫn nên để file này trong .gitignore của GitHub để bảo mật
 
 Loại bỏ các file build tạm
 
