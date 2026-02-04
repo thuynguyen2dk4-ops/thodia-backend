@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    /* Cấu hình môi trường & Ngôn ngữ */
+    "target": "ES2020",                                  /* Phiên bản JS đầu ra (Node 14+ hỗ trợ tốt ES2020) */
+    "module": "commonjs",                                /* Module chuẩn cho Node.js */
+    "lib": ["ES2020"],                                   /* Thư viện hỗ trợ */
+    
+    /* Đường dẫn & Module */
+    "moduleResolution": "node",                          /* Cách tìm module (giống Node.js) */
+    "baseUrl": "./",                                     /* Đường dẫn gốc */
+    "outDir": "./dist",                                  /* Thư mục chứa code sau khi build */
+    "rootDir": "./src",                                  /* Thư mục chứa source code gốc */
+    "resolveJsonModule": true,                           /* Cho phép import file .json */
+    
+    /* Tương thích */
+    "esModuleInterop": true,                             /* Cho phép import module CommonJS bằng cú pháp ES6 (import ... from) */
+    "forceConsistentCasingInFileNames": true,            /* Bắt buộc đúng chữ hoa/thường trong tên file */
+
+    /* Kiểm tra lỗi (Strict Mode) */
+    "strict": true,                                      /* Bật tất cả các kiểm tra nghiêm ngặt */
+    "noImplicitAny": true,                               /* Báo lỗi nếu biến không có kiểu dữ liệu (any) */
+    "strictNullChecks": true,                            /* Kiểm tra kỹ các giá trị null/undefined */
+    "skipLibCheck": true                                 /* Bỏ qua kiểm tra type của các thư viện trong node_modules (giúp build nhanh hơn) */
+  },
+  "include": ["src/**/*"],                               /* Chỉ biên dịch các file trong thư mục src */
+  "exclude": ["node_modules", "dist", "**/*.test.ts"]    /* Loại trừ các thư mục không cần thiết */
+}
