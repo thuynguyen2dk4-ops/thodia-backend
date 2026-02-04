@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 5000;
 // Middleware
 // Tìm dòng app.use(cors()); và sửa thành:
 app.use(cors({
-  origin: ['http://localhost:8081', 'http://localhost:5173','http://localhost:8082'], // Cho phép cả cổng 8081
+  origin: ['http://localhost:8081', 'http://localhost:5173','http://localhost:8082','http://thodiauni.space'], // Cho phép cả cổng 8081
   credentials: true 
 }));
 // Thêm đoạn này để xem log mỗi khi có request tới
