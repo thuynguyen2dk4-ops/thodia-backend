@@ -1,0 +1,21 @@
+node_modules/
+dist/
+.env
+service-account-key.json
+
+**Bước 2: Đồng bộ dữ liệu từ GitHub về máy**
+```bash
+git pull origin main --rebase
+
+**Bước 3: Xóa các file nặng/bí mật đã lỡ đưa vào bộ nhớ tạm (Stage)**
+Nếu bạn lỡ commit `node_modules` hay file key, hãy chạy lệnh này để "gỡ" chúng ra khỏi danh sách đẩy lên:
+```bash
+git rm -r --cached node_modules
+git rm --cached service-account-key.json
+git commit -m "fix: remove heavy and sensitive files"
+
+**Bước 4: Đẩy lại lên GitHub**
+```bash
+git push origin main
+
+**Lưu ý về GCP:** Trong ảnh 1 bạn vẫn bị lỗi "retry budget exhausted" là vì file `.dockerignore` cũ của bạn có dấu `\*`. Tôi đã sửa thành `*` trong bản cập nhật trên. Sau khi xử lý xong GitHub, bạn chạy lại lệnh `gcloud builds submit` sẽ thấy nó chạy rất nhanh vì không còn bị nặng nữa.
