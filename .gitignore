@@ -18,4 +18,6 @@ git commit -m "fix: remove heavy and sensitive files"
 ```bash
 git push origin main
 
-**Lưu ý về GCP:** Trong ảnh 1 bạn vẫn bị lỗi "retry budget exhausted" là vì file `.dockerignore` cũ của bạn có dấu `\*`. Tôi đã sửa thành `*` trong bản cập nhật trên. Sau khi xử lý xong GitHub, bạn chạy lại lệnh `gcloud builds submit` sẽ thấy nó chạy rất nhanh vì không còn bị nặng nữa.
+**Lưu ý về GCP:** Trong ảnh 1 bạn vẫn bị lỗi "retry budget exhausted" là vì file `.dockerignore` cũ của bạn có dấu `\*`. Tôi đã sửa thành `*` trong bản cập nhật trên. Sau khi xử lý xong GitHub, bạn chạy lại lệnh `gcloud builds submit` sẽ thấy nó chạy rất nhanh vì không còn bị nặng nữa.service-account-key.json
+service-account-key.json
+node_modules/
