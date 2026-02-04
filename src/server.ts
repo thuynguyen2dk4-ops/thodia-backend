@@ -1,37 +1,43 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import path from 'path';
 import apiRoutes from './routes/api';
-import { pool } from './config/db'; // Đảm bảo đã import pool
+
+// Load biến môi trường
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
-// Tìm dòng app.use(cors()); và sửa thành:
+// --- CẤU HÌNH CORS (QUAN TRỌNG) ---
+// Cho phép Frontend (thodiauni.space) gọi vào Backend này
 app.use(cors({
-  origin: ['http://localhost:8081', 'http://localhost:5173','http://localhost:8082','http://thodiauni.space'], // Cho phép cả cổng 8081
-  credentials: true 
+    origin: '*', // Cho phép tất cả các domain (Dùng cái này để fix nhanh lỗi CORS)
+    // Nếu muốn bảo mật hơn sau này, hãy dùng: 
+    // origin: ['https://www.thodiauni.space', 'https://thodiauni.space', 'http://localhost:5173'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true 
 }));
-// Thêm đoạn này để xem log mỗi khi có request tới
-app.use((req, res, next) => {
-    console.log(`📡 Request đến: ${req.method} ${req.url}`);
-    next();
-});
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+
+app.use(express.json()); 
+app.use(express.urlencoded({ extended: true })); 
+
+// Cấu hình phục vụ file tĩnh (ảnh uploads)
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Routes
 app.use('/api', apiRoutes);
 
-// Root
+// Route kiểm tra serve sống hay chết
 app.get('/', (req, res) => {
-  res.send('ThodiaUni Backend is running...');
+    res.send('🚀 Thodia Backend is running successfully!');
 });
-pool.connect()
-  .then(() => console.log('✅ Đã kết nối Database thành công!'))
-  .catch((err) => console.error('❌ Lỗi kết nối Database:', err.message));
+
+// Start Server
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+    console.log(`\n========================================`);
+    console.log(`🚀 Server is running on port ${PORT}`);
+    console.log(`========================================\n`);
 });
