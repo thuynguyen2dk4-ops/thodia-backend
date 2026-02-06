@@ -10,7 +10,7 @@ import * as claimController from '../controllers/claimController';
 import * as reviewController from '../controllers/reviewController';
 import * as favoriteController from '../controllers/favoriteController';
 import * as paymentController from '../controllers/paymentController';
-
+import * as directionController from '../controllers/directionController';
 const router = express.Router();
 
 // ==================================================================
@@ -27,7 +27,7 @@ const upload = multer({
 // ==================================================================
 // 1. STORE & MENU & GALLERY (Dùng storeController mới)
 // ==================================================================
-
+router.get('/directions', directionController.getSmartRoute);
 // --- Public / General ---
 router.get('/stores/approved', storeController.getApprovedStores); // Map hiển thị
 router.get('/search/stores', storeController.searchStores);        // Search Bar

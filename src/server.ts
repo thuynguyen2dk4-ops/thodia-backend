@@ -15,7 +15,7 @@ const PORT = process.env.PORT || 5000;
 app.use(cors({
     origin: '*', // Cho phép tất cả các domain (Dùng cái này để fix nhanh lỗi CORS)
     // Nếu muốn bảo mật hơn sau này, hãy dùng: 
-    // origin: ['https://www.thodiauni.space', 'https://thodiauni.space', 'http://localhost:5173'],
+    // origin: ['https://www.thodiauni.space', 'https://thodiauni.space', 'http://localhost:8081'],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true 
