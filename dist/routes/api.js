@@ -47,6 +47,7 @@ const claimController = __importStar(require("../controllers/claimController"));
 const reviewController = __importStar(require("../controllers/reviewController"));
 const favoriteController = __importStar(require("../controllers/favoriteController"));
 const paymentController = __importStar(require("../controllers/paymentController"));
+const directionController = __importStar(require("../controllers/directionController"));
 const router = express_1.default.Router();
 // ==================================================================
 // CẤU HÌNH UPLOAD FILE (Multer)
@@ -61,6 +62,7 @@ const upload = (0, multer_1.default)({
 // ==================================================================
 // 1. STORE & MENU & GALLERY (Dùng storeController mới)
 // ==================================================================
+router.get('/directions', directionController.getSmartRoute);
 // --- Public / General ---
 router.get('/stores/approved', storeController.getApprovedStores); // Map hiển thị
 router.get('/search/stores', storeController.searchStores); // Search Bar
