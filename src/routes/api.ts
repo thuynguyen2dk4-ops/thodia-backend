@@ -11,143 +11,147 @@ import * as reviewController from '../controllers/reviewController';
 import * as favoriteController from '../controllers/favoriteController';
 import * as paymentController from '../controllers/paymentController';
 import * as directionController from '../controllers/directionController';
+
+// Import các hàm cụ thể từ storeController (để tránh lỗi undefined)
+import { 
+    getStoresInBuilding, // 👈 Hàm quan trọng cho Sub-stores
+    saveStore,
+    saveMenuItem 
+} from '../controllers/storeController';
+
 const router = express.Router();
 
 // ==================================================================
 // CẤU HÌNH UPLOAD FILE (Multer)
 // ==================================================================
-// Sử dụng MemoryStorage để lấy Buffer, sau đó Controller sẽ upload lên GCP/S3
 const upload = multer({
     storage: multer.memoryStorage(),
-    limits: {
-        fileSize: 5 * 1024 * 1024, // Giới hạn 5MB
-    },
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
 });
 
 // ==================================================================
-// 1. STORE & MENU & GALLERY (Dùng storeController mới)
+// 1. STORE (CỬA HÀNG)
 // ==================================================================
-router.get('/directions', directionController.getSmartRoute);
+
 // --- Public / General ---
+router.get('/directions', directionController.getSmartRoute);
 router.get('/stores/approved', storeController.getApprovedStores); // Map hiển thị
 router.get('/search/stores', storeController.searchStores);        // Search Bar
 router.get('/stores/:id/public', storeController.getStorePublic);  // Store Detail Modal
 
-// --- User Stores Management ---
+// 👇 [QUAN TRỌNG] Route lấy danh sách cửa hàng con (Fix lỗi 404)
+// Frontend gọi: /api/stores/:buildingId/sub-stores
+router.get('/stores/:buildingId/sub-stores', getStoresInBuilding); 
+
+// --- User Stores Management (Quản lý cửa hàng) ---
 router.get('/user-stores', storeController.getUserStores);
+
+// 👇 [QUAN TRỌNG] Route lưu cửa hàng (Fix lỗi Upload Avatar)
+// Frontend gọi: /api/stores/save
 router.post('/stores/save', 
     upload.fields([
         { name: 'avatar', maxCount: 1 }, 
         { name: 'gallery', maxCount: 10 }
     ]), 
-    storeController.saveStore
+    saveStore
 );
+
 router.delete('/stores/:id', storeController.deleteStore);
 
-// --- Menu Management ---
+// ==================================================================
+// 2. MENU & GALLERY
+// ==================================================================
+
+// --- Menu ---
 router.get('/stores/:id/menu', storeController.getStoreMenu);
-router.post('/menu-items', 
-    upload.fields([{ name: 'image', maxCount: 1 }]), 
-    storeController.saveMenuItem // Dùng chung function (ko có id => create)
-);
-router.put('/menu-items/:id', 
-    upload.fields([{ name: 'image', maxCount: 1 }]), 
-    storeController.saveMenuItem // Dùng chung function (có id => update)
-);
+
+// Lưu Menu (Create/Update) - Có upload ảnh
+router.post('/menu-items', upload.fields([{ name: 'image', maxCount: 1 }]), saveMenuItem);
+router.put('/menu-items/:id', upload.fields([{ name: 'image', maxCount: 1 }]), saveMenuItem);
 router.delete('/menu-items/:itemId', storeController.deleteMenuItem);
 
-// --- Gallery Management ---
+// --- Gallery ---
 router.get('/stores/:id/gallery', storeController.getStoreGallery);
 router.delete('/gallery/:imageId', storeController.deleteGalleryImage);
 
 
 // ==================================================================
-// 2. VOUCHERS
+// 3. VOUCHERS
 // ==================================================================
 
-// Public: Lấy voucher hiển thị NearbyBanner
-// *LƯU Ý: Frontend gọi GET /api/vouchers/active. Bạn cần thêm func getActiveVouchers vào voucherController.
 router.get('/vouchers/active', voucherController.getActiveVouchers); 
-
-// User: Ví Voucher (My Vouchers)
-// *LƯU Ý: Frontend gọi GET /api/user-vouchers & POST /api/vouchers/save. Cần thêm func saveUserVoucher, getUserVouchers.
 router.get('/user-vouchers', voucherController.getUserVouchers);
 router.post('/vouchers/save', voucherController.saveUserVoucher);
 router.delete('/user-vouchers/:id', voucherController.removeUserVoucher);
-
-// Store Owner: Quản lý Voucher của cửa hàng
 router.get('/store-vouchers/:storeId', voucherController.getStoreVouchers);
 
-//Create/Update/Delete Voucher (Frontend gọi POST /api/vouchers/active trong useUserStores)
-router.post('/vouchers/active', voucherController.createVoucher); // Logic tạo mới
-router.put('/vouchers/:id', voucherController.updateVoucher);     // Cần thêm func updateVoucher
-router.delete('/vouchers/:id', voucherController.deleteVoucher);  // Cần thêm func deleteVoucher
+router.post('/vouchers/active', voucherController.createVoucher);
+router.put('/vouchers/:id', voucherController.updateVoucher);
+router.delete('/vouchers/:id', voucherController.deleteVoucher);
 
 
 // ==================================================================
-// 3. REVIEWS
+// 4. REVIEWS (ĐÁNH GIÁ)
 // ==================================================================
 
-router.get('/reviews/list/:storeId', reviewController.getReviews); // ReviewSection
-router.get('/reviews/:storeId', reviewController.getReviews);      // BottomSheet (fetchRealRating)
+router.get('/reviews/list/:storeId', reviewController.getReviews);
+router.get('/reviews/:storeId', reviewController.getReviews);
 router.post('/reviews', reviewController.addReview);
 router.delete('/reviews/:id', reviewController.deleteReview);
 
 
 // ==================================================================
-// 4. FAVORITES
+// 5. FAVORITES (YÊU THÍCH)
 // ==================================================================
 
 router.get('/favorites', favoriteController.getFavorites);
-router.post('/favorites', favoriteController.toggleFavorite); // Add/Remove toggle
-// Frontend gọi DELETE /api/favorites/:id. Cần thêm func removeFavoriteById hoặc dùng toggle.
+router.post('/favorites', favoriteController.toggleFavorite); 
 router.delete('/favorites/:id', favoriteController.removeFavoriteById); 
 
 
 // ==================================================================
-// 5. JOBS (Tuyển dụng)
+// 6. JOBS (TUYỂN DỤNG)
 // ==================================================================
 
-router.get('/jobs/approved', jobController.getJobsPublic); // JobsPage
-router.post('/jobs', jobController.createJob);             // JobsPage (Đăng tin)
+router.get('/jobs/approved', jobController.getJobsPublic);
+router.post('/jobs', jobController.createJob);
 
 
 // ==================================================================
-// 6. CLAIMS (Xác minh chủ sở hữu)
+// 7. CLAIMS (XÁC MINH CHỦ SỞ HỮU)
 // ==================================================================
 
 router.post('/claims/submit', 
-    upload.array('proofFiles', 5), // Frontend gửi key 'proofFiles', max 5 ảnh
+    upload.array('proofFiles', 5), 
     claimController.submitClaim
 );
 
 
 // ==================================================================
-// 7. ADMIN DASHBOARD
+// 8. ADMIN DASHBOARD
 // ==================================================================
 
 router.get('/admin/check', adminController.checkAdmin);
 router.get('/admin/stores', adminController.getStores);
-router.put('/admin/stores/:id/status', adminController.updateStoreStatus); // Duyệt store
+router.put('/admin/stores/:id/status', adminController.updateStoreStatus);
 
 router.get('/admin/ads', adminController.getAds);
-router.put('/admin/ads/cancel/:id', adminController.cancelAd); // Frontend gọi cancel ad
+router.put('/admin/ads/cancel/:id', adminController.cancelAd);
 
 router.get('/admin/jobs', adminController.getJobs);
-router.delete('/admin/jobs/:id', adminController.deleteJob);       // Cần thêm
-router.put('/admin/jobs/:id/status', adminController.updateJobStatus); // Cần thêm
+router.delete('/admin/jobs/:id', adminController.deleteJob);       
+router.put('/admin/jobs/:id/status', adminController.updateJobStatus); 
 
 router.get('/admin/users', adminController.getUsers);
-router.delete('/admin/users/:id', adminController.deleteUser);     // Cần thêm
+router.delete('/admin/users/:id', adminController.deleteUser);     
 
 router.get('/admin/claims', adminController.getClaims);
-// Frontend gọi 2 route này trong AdminStoreClaims.tsx
-router.post('/admin/claims/approve', adminController.approveClaim); // Cần thêm logic duyệt + chuyển quyền sở hữu
-router.post('/admin/claims/reject', adminController.rejectClaim);   // Cần thêm logic từ chối
+router.post('/admin/claims/approve', adminController.approveClaim);
+router.post('/admin/claims/reject', adminController.rejectClaim);
 
 
 // ==================================================================
-// 8. PAYMENT
+// 9. PAYMENT
 // ==================================================================
 
 router.post('/payment/create-checkout', paymentController.createPaymentLink);
